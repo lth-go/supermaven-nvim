@@ -9,7 +9,7 @@ local M = {
 M.setup = function()
   M.augroup = vim.api.nvim_create_augroup("supermaven", { clear = true })
 
-  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+  vim.api.nvim_create_autocmd({ "TextChangedI", "TextChangedP" }, {
     group = M.augroup,
     callback = function(event)
       local file_name = event["file"]
@@ -41,17 +41,17 @@ M.setup = function()
     end,
   })
 
-  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
-    group = M.augroup,
-    callback = function(event)
-      local file_name = event["file"]
-      local buffer = event["buf"]
-      if not file_name or not buffer then
-        return
-      end
-      binary:on_update(buffer, file_name, "cursor")
-    end,
-  })
+  -- vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+  --   group = M.augroup,
+  --   callback = function(event)
+  --     local file_name = event["file"]
+  --     local buffer = event["buf"]
+  --     if not file_name or not buffer then
+  --       return
+  --     end
+  --     binary:on_update(buffer, file_name, "cursor")
+  --   end,
+  -- })
 
   vim.api.nvim_create_autocmd({ "InsertLeave" }, {
     group = M.augroup,

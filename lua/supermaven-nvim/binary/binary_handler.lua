@@ -27,9 +27,15 @@ BinaryLifecycle.HARD_SIZE_LIMIT = 10e6
 local timer = loop.new_timer()
 timer:start(
   0,
-  25,
+  100,
   vim.schedule_wrap(function()
     if BinaryLifecycle.wants_polling then
+      local now = loop.now()
+      if now - BinaryLifecycle.last_provide_time > 5 * 1000 then
+        BinaryLifecycle.wants_polling = false
+        return
+      end
+
       BinaryLifecycle:poll_once()
     end
   end)
@@ -81,26 +87,31 @@ end
 ---@param file_name string
 ---@param event_type "text_changed" | "cursor"
 function BinaryLifecycle:on_update(buffer, file_name, event_type)
-  if config.ignore_filetypes[vim.bo.ft] or vim.tbl_contains(config.ignore_filetypes, vim.bo.filetype) then
+  if not self:buf_is_valid(buffer) then
     return
   end
+
   local buffer_text = u.get_text(buffer)
   local file_path = vim.api.nvim_buf_get_name(buffer)
   if #buffer_text > self.HARD_SIZE_LIMIT then
     log:warn("File is too large to send to server. Skipping...")
     return
   end
+  if (buffer_text == self.last_text) and (file_name == self.last_path) then
+    return
+  end
 
   self:document_changed(file_path, buffer_text)
-  local cursor = api.nvim_win_get_cursor(0)
-  local completion_is_allowed = (buffer_text ~= self.last_text) and (self.last_path == file_name)
+
   local context = {
     document_text = buffer_text,
-    cursor = cursor,
+    cursor = api.nvim_win_get_cursor(0),
     file_name = file_name,
   }
+
+  local completion_is_allowed = (buffer_text ~= self.last_text) and (self.last_path == file_name)
   if completion_is_allowed then
-    self:provide_inline_completion_items(buffer, cursor, context)
+    self:provide_inline_completion_items(buffer, context.cursor)
   elseif not self:same_context(context) then
     preview:dispose_inlay()
   end
@@ -259,30 +270,23 @@ function BinaryLifecycle:purge_old_states()
   end
 end
 
-function BinaryLifecycle:provide_inline_completion_items(buffer, cursor, context)
+function BinaryLifecycle:provide_inline_completion_items(buffer, cursor)
   self.buffer = buffer
   self.cursor = cursor
-  self.last_context = context
   self.last_provide_time = loop.now()
   self:poll_once()
+  self.wants_polling = true
 end
 
 function BinaryLifecycle:poll_once()
-  if config.ignore_filetypes[vim.bo.ft] or vim.tbl_contains(config.ignore_filetypes, vim.bo.filetype) then
-    return
-  end
-  local now = loop.now()
-  if now - self.last_provide_time > 5 * 1000 then
-    self.wants_polling = false
-    return
-  end
-  self.wants_polling = true
   local buffer = self.buffer
   local cursor = self.cursor
-  if not vim.api.nvim_buf_is_valid(buffer) then
+
+  if not self:buf_is_valid(buffer) then
     self.wants_polling = false
     return
   end
+
   local text_split = u.get_text_before_after_cursor(cursor)
   local line_before_cursor = text_split.text_before_cursor
   local line_after_cursor = text_split.text_after_cursor
@@ -291,6 +295,7 @@ function BinaryLifecycle:poll_once()
   end
   local status, prefix = pcall(u.get_cursor_prefix, buffer, cursor)
   if not status then
+    self.wants_polling = false
     return
   end
   local get_following_line = function(index)
@@ -316,6 +321,8 @@ function BinaryLifecycle:poll_once()
     return
   end
 
+  self.wants_polling = maybe_completion.is_incomplete
+
   if maybe_completion.kind == "jump" then
     return
   elseif maybe_completion.kind == "delete" then
@@ -323,10 +330,9 @@ function BinaryLifecycle:poll_once()
   elseif maybe_completion.kind == "skip" then
     return
   end
-
-  self.wants_polling = maybe_completion.is_incomplete
-  if maybe_completion.dedent == nil or
-   (#maybe_completion.dedent > 0 and not u.ends_with(line_before_cursor, maybe_completion.dedent))
+  if
+    maybe_completion.dedent == nil
+    or (#maybe_completion.dedent > 0 and not u.ends_with(line_before_cursor, maybe_completion.dedent))
   then
     return
   end
@@ -598,6 +604,45 @@ function BinaryLifecycle:document_changed(full_path, buffer_text)
     path = full_path,
   }
   self:send_json(outgoing_message)
+end
+
+function BinaryLifecycle:buf_is_valid(bufnr)
+  if not bufnr then
+    return false
+  end
+
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return false
+  end
+
+  if vim.bo[bufnr].buftype ~= "" then
+    return false
+  end
+
+  if vim.bo[bufnr].bufhidden ~= "" then
+    return false
+  end
+
+  if not vim.bo[bufnr].buflisted then
+    return false
+  end
+
+  local file_type = vim.bo[bufnr].filetype
+  if file_type == "" then
+    return false
+  end
+
+  if #config.filetypes > 0 then
+    if not vim.tbl_contains(config.filetypes, file_type) then
+      return false
+    end
+  end
+
+  if config.ignore_filetypes[vim.bo.ft] or vim.tbl_contains(config.ignore_filetypes, file_type) then
+    return false
+  end
+
+  return true
 end
 
 return BinaryLifecycle

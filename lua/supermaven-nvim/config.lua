@@ -1,16 +1,21 @@
 local default_config = {
   keymaps = {
-    accept_suggestion = "<Tab>",
+    accept_suggestion = "<C-j>",
     clear_suggestion = "<C-]>",
-    accept_word = "<C-j>",
+    accept_word = "<A-j>",
   },
+  filetypes = {},
   ignore_filetypes = {},
   disable_inline_completion = false,
   disable_keymaps = false,
   condition = function()
     return false
   end,
-  log_level = "info",
+  log_level = "error",
+  color = {
+    suggestion_color = "#928374",
+    cterm = 245,
+  },
 }
 
 local M = {

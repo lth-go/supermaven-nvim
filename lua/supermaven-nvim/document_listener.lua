@@ -17,7 +17,7 @@ M.setup = function()
       if not file_name or not buffer then
         return
       end
-      binary:on_update(buffer, file_name, "text_changed")
+      binary:on_update(buffer, file_name)
     end,
   })
 
@@ -40,18 +40,6 @@ M.setup = function()
       end
     end,
   })
-
-  -- vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
-  --   group = M.augroup,
-  --   callback = function(event)
-  --     local file_name = event["file"]
-  --     local buffer = event["buf"]
-  --     if not file_name or not buffer then
-  --       return
-  --     end
-  --     binary:on_update(buffer, file_name, "cursor")
-  --   end,
-  -- })
 
   vim.api.nvim_create_autocmd({ "InsertLeave" }, {
     group = M.augroup,

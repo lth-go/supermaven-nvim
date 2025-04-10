@@ -17,7 +17,6 @@ local BinaryLifecycle = {
   cursor = nil,
   max_state_id_retention = 50,
   service_message_displayed = false,
-  changed_document_list = {},
   last_state = nil,
   dust_strings = {},
 }
@@ -27,12 +26,15 @@ BinaryLifecycle.HARD_SIZE_LIMIT = 10e6
 local timer = loop.new_timer()
 timer:start(
   0,
-  100,
+  200,
   vim.schedule_wrap(function()
     if BinaryLifecycle.wants_polling then
       local now = loop.now()
       if now - BinaryLifecycle.last_provide_time > 5 * 1000 then
         BinaryLifecycle.wants_polling = false
+        return
+      end
+      if now - BinaryLifecycle.last_provide_time < 200 then
         return
       end
 
@@ -45,9 +47,7 @@ function BinaryLifecycle:start_binary()
   self.stdin = loop.new_pipe(false)
   self.stdout = loop.new_pipe(false)
   self.stderr = loop.new_pipe(false)
-  self.last_text = nil
-  self.last_path = nil
-  self.last_context = nil
+  self.last_context = {}
   self.wants_polling = false
   self.handle = loop.spawn(binary_path, {
     args = {
@@ -85,40 +85,29 @@ end
 
 ---@param buffer integer
 ---@param file_name string
----@param event_type "text_changed" | "cursor"
-function BinaryLifecycle:on_update(buffer, file_name, event_type)
+function BinaryLifecycle:on_update(buffer, file_name)
   if not self:buf_is_valid(buffer) then
     return
   end
 
   local buffer_text = u.get_text(buffer)
-  local file_path = vim.api.nvim_buf_get_name(buffer)
+
   if #buffer_text > self.HARD_SIZE_LIMIT then
     log:warn("File is too large to send to server. Skipping...")
     return
   end
-  if (buffer_text == self.last_text) and (file_name == self.last_path) then
+
+  if file_name == self.last_context.file_name and buffer_text == self.last_context.document_text then
     return
   end
 
-  self:document_changed(file_path, buffer_text)
-
-  local context = {
-    document_text = buffer_text,
-    cursor = api.nvim_win_get_cursor(0),
+  self.last_context = {
     file_name = file_name,
+    document_text = buffer_text,
   }
 
-  local completion_is_allowed = (buffer_text ~= self.last_text) and (self.last_path == file_name)
-  if completion_is_allowed then
-    self:provide_inline_completion_items(buffer, context.cursor)
-  elseif not self:same_context(context) then
-    preview:dispose_inlay()
-  end
-
-  self.last_path = file_name
-  self.last_text = buffer_text
-  self.last_context = context
+  preview:dispose_inlay()
+  self:provide_inline_completion_items(buffer, api.nvim_win_get_cursor(0))
 end
 
 function BinaryLifecycle:check_process()
@@ -131,16 +120,6 @@ function BinaryLifecycle:check_process()
   end
 
   self:start_binary()
-end
-
-function BinaryLifecycle:same_context(context)
-  if self.last_context == nil then
-    return false
-  end
-  return context.cursor[1] == self.last_context.cursor[1]
-    and context.cursor[2] == self.last_context.cursor[2]
-    and context.file_name == self.last_context.file_name
-    and context.document_text == self.last_context.document_text
 end
 
 function BinaryLifecycle:read_loop()
@@ -274,7 +253,6 @@ function BinaryLifecycle:provide_inline_completion_items(buffer, cursor)
   self.buffer = buffer
   self.cursor = cursor
   self.last_provide_time = loop.now()
-  self:poll_once()
   self.wants_polling = true
 end
 
@@ -290,9 +268,7 @@ function BinaryLifecycle:poll_once()
   local text_split = u.get_text_before_after_cursor(cursor)
   local line_before_cursor = text_split.text_before_cursor
   local line_after_cursor = text_split.text_after_cursor
-  if line_before_cursor == nil or line_after_cursor == nil then
-    return
-  end
+
   local status, prefix = pcall(u.get_cursor_prefix, buffer, cursor)
   if not status then
     self.wants_polling = false
@@ -301,20 +277,10 @@ function BinaryLifecycle:poll_once()
   local get_following_line = function(index)
     return u.safe_get_line(buffer, cursor[1] + index) or ""
   end
-  local cached_chain_info = nil -- TODO
   local query_state_id = self:submit_query(buffer, prefix)
-  if query_state_id == nil then
-    return
-  end
-  local maybe_completion = self:check_state(
-    prefix,
-    line_before_cursor,
-    line_after_cursor,
-    false,
-    get_following_line,
-    query_state_id,
-    cached_chain_info
-  )
+
+  local maybe_completion =
+    self:check_state(prefix, line_before_cursor, line_after_cursor, false, get_following_line, query_state_id)
 
   if maybe_completion == nil then
     preview:dispose_inlay()
@@ -357,7 +323,6 @@ end
 ---@param can_retry boolean
 ---@param get_following_line fun(line: string): string
 ---@param query_state_id integer
----@param cached_chain_info ChainInfo | nil
 ---@return AnyCompletion | nil
 function BinaryLifecycle:check_state(
   prefix,
@@ -365,8 +330,7 @@ function BinaryLifecycle:check_state(
   line_after_cursor,
   can_retry,
   get_following_line,
-  query_state_id,
-  cached_chain_info
+  query_state_id
 )
   local params = {
     line_before_cursor = line_before_cursor,
@@ -379,26 +343,41 @@ function BinaryLifecycle:check_state(
   }
 
   self:check_process()
+
   local best_completion = {}
   local best_length = 0
   local best_state_id = -1
 
   for state_id, state in pairs(self.state_map) do
     local state_prefix = state.prefix
-    if state_prefix ~= nil and #prefix >= #state_prefix then
-      if string.sub(prefix, 1, #state_prefix) == state_prefix then
-        local user_input = prefix:sub(#state_prefix + 1)
-        local remaining_completion = self:strip_prefix(state.completion, user_input)
-        if remaining_completion ~= nil then
-          local total_length = self:completion_text_length(remaining_completion)
-          if total_length > best_length or (total_length == best_length and state_id > best_state_id) then
-            best_completion = remaining_completion
-            best_length = total_length
-            best_state_id = state_id
-          end
-        end
-      end
+
+    if state_prefix == nil then
+      goto continue
     end
+
+    if #prefix < #state_prefix then
+      goto continue
+    end
+
+    if string.sub(prefix, 1, #state_prefix) ~= state_prefix then
+      goto continue
+    end
+
+    local user_input = prefix:sub(#state_prefix + 1)
+    local remaining_completion = self:strip_prefix(state.completion, user_input)
+
+    if remaining_completion == nil then
+      goto continue
+    end
+
+    local total_length = self:completion_text_length(remaining_completion)
+    if total_length > best_length or (total_length == best_length and state_id > best_state_id) then
+      best_completion = remaining_completion
+      best_length = total_length
+      best_state_id = state_id
+    end
+
+    ::continue::
   end
 
   return textual.derive_completion(best_completion, params)
@@ -416,11 +395,13 @@ end
 
 ---@param bufnr integer
 ---@param prefix string
----@return integer | nil
+---@return integer
 function BinaryLifecycle:submit_query(bufnr, prefix)
   self:purge_old_states()
+
   local buffer_text = u.get_text(bufnr)
   local offset = #prefix
+
   local document_state = {
     kind = "file_update",
     path = vim.api.nvim_buf_get_name(bufnr),
@@ -431,42 +412,39 @@ function BinaryLifecycle:submit_query(bufnr, prefix)
     path = vim.api.nvim_buf_get_name(bufnr),
     offset = offset,
   }
+
   if self.last_state ~= nil then
-    if #self.changed_document_list == 0 then
-      if self.last_state.cursor.path == cursor_state.path and self.last_state.cursor.offset == cursor_state.offset then
-        if
-          self.last_state.document.path == document_state.path
-          and self.last_state.document.content == document_state.content
-        then
-          return self.current_state_id
-        end
+    if self.last_state.cursor.path == cursor_state.path and self.last_state.cursor.offset == cursor_state.offset then
+      if
+        self.last_state.document.path == document_state.path
+        and self.last_state.document.content == document_state.content
+      then
+        return self.current_state_id
       end
     end
   end
 
+  self:document_changed(document_state.path)
+
   local updates = {
     cursor_state,
+    document_state,
   }
-  self:document_changed(document_state.path, buffer_text)
-  for _, document_value in pairs(self.changed_document_list) do
-    updates[#updates + 1] = {
-      kind = "file_update",
-      path = document_value.path,
-      content = document_value.content,
-    }
-  end
-  self.changed_document_list = {}
+
   self.current_state_id = self.current_state_id + 1
   self:send_message(updates)
+
   self.state_map[self.current_state_id] = {
     prefix = prefix,
     completion = {},
     has_ended = false,
   }
+
   self.last_state = {
     cursor = cursor_state,
     document = document_state,
   }
+
   return self.current_state_id
 end
 
@@ -592,13 +570,7 @@ function BinaryLifecycle:open_popup(message, include_free)
 end
 
 ---@param full_path string
----@param buffer_text string
-function BinaryLifecycle:document_changed(full_path, buffer_text)
-  self.changed_document_list[full_path] = {
-    path = full_path,
-    content = buffer_text,
-    cursor = api.nvim_win_get_cursor(0),
-  }
+function BinaryLifecycle:document_changed(full_path)
   local outgoing_message = {
     kind = "inform_file_changed",
     path = full_path,

@@ -6,7 +6,6 @@ local default_config = {
   },
   filetypes = {},
   ignore_filetypes = {},
-  disable_inline_completion = false,
   disable_keymaps = false,
   condition = function()
     return false

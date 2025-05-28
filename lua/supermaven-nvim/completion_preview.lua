@@ -4,7 +4,6 @@ local CompletionPreview = {
   inlay_instance = nil,
   ns_id = vim.api.nvim_create_namespace("supermaven"),
   suggestion_group = "Comment",
-  disable_inline_completion = false,
 }
 
 CompletionPreview.__index = CompletionPreview
@@ -58,10 +57,6 @@ function CompletionPreview:render_with_inlay(
 end
 
 function CompletionPreview:render_floating(first_line, opts, buf, line_before_cursor)
-  if self.disable_inline_completion then
-    return
-  end
-
   if first_line ~= "" then
     opts.virt_text = { { u.trim_start(line_before_cursor) .. first_line, self.suggestion_group } }
   end
@@ -72,10 +67,6 @@ function CompletionPreview:render_floating(first_line, opts, buf, line_before_cu
 end
 
 function CompletionPreview:render_standard(first_line, other_lines, opts, buf)
-  if self.disable_inline_completion then
-    return
-  end
-
   if first_line ~= "" then
     opts.virt_text = { { first_line, self.suggestion_group } }
   end

@@ -51,7 +51,6 @@ require("supermaven-nvim").setup({
     cterm = 244,
   },
   log_level = "info", -- set to "off" to disable logging completely
-  disable_inline_completion = false, -- disables inline completion for use with cmp
   disable_keymaps = false, -- disables built in keymaps for more manual control
   condition = function()
     return false
@@ -75,52 +74,6 @@ require("supermaven-nvim").setup({
 ```
 
 This will disable supermaven-nvim for files with the name `foo.sh` in it, e.g. `myscriptfoo.sh`.
-
-### Using with nvim-cmp
-
-If you are using nvim-cmp, you can use the `supermaven` source (which is registered by default) by adding the following to your `cmp.setup()` function:
-
-```lua
--- cmp.lua
-cmp.setup {
-  ...
-  sources = {
-    { name = "supermaven" },
-  }
-  ...
-}
-```
-
-It also has a builtin highlight group CmpItemKindSupermaven. To add an icon to Supermaven for lspkind, simply add Supermaven to your lspkind symbol map.
-
-```lua
--- lspkind.lua
-local lspkind = require("lspkind")
-lspkind.init({
-  symbol_map = {
-    Supermaven = "",
-  },
-})
-
-vim.api.nvim_set_hl(0, "CmpItemKindSupermaven", {fg ="#6CC644"})
-```
-
-Alternatively, you can add Supermaven to the lspkind symbol_map within the cmp format function.
-
-```lua
--- cmp.lua
-cmp.setup {
-  ...
-  formatting = {
-    format = lspkind.cmp_format({
-      mode = "symbol",
-      max_width = 50,
-      symbol_map = { Supermaven = "" }
-    })
-  }
-  ...
-}
-```
 
 
 ### Programmatically checking and accepting suggestions

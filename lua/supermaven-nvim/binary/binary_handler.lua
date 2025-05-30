@@ -314,7 +314,7 @@ function BinaryLifecycle:poll_once()
 
   local prior_delete = #maybe_completion.dedent
   maybe_completion.text = u.trim_end(maybe_completion.text)
-  preview:render_with_inlay(buffer, prior_delete, maybe_completion.text, line_after_cursor, line_before_cursor)
+  preview:render_with_inlay(buffer, prior_delete, maybe_completion.text, line_after_cursor, line_before_cursor, cursor)
 end
 
 ---@param prefix string

@@ -13,7 +13,8 @@ function CompletionPreview:render_with_inlay(
   prior_delete,
   completion_text,
   line_after_cursor,
-  line_before_cursor
+  line_before_cursor,
+  cursor
 )
   self:dispose_inlay()
 
@@ -52,6 +53,7 @@ function CompletionPreview:render_with_inlay(
     line_before_cursor = line_before_cursor,
     line_after_cursor = line_after_cursor,
     is_floating = is_floating,
+    cursor = cursor,
   }
   self.inlay_instance = new_instance
 end
@@ -105,7 +107,12 @@ function CompletionPreview:accept_completion_text(is_partial)
     if is_partial then
       completion_text = u.to_next_word(completion_text)
     end
-    return { completion_text = completion_text, prior_delete = prior_delete, is_active = current_instance.is_active }
+    return {
+      completion_text = completion_text,
+      prior_delete = prior_delete,
+      is_active = current_instance.is_active,
+      cursor = current_instance.cursor,
+    }
   end
 end
 
@@ -131,35 +138,39 @@ end
 
 function CompletionPreview.on_accept_suggestion(is_partial)
   local accept_completion = CompletionPreview:accept_completion_text(is_partial)
-  if accept_completion ~= nil and accept_completion.is_active then
-    local completion_text = accept_completion.completion_text
-    local prior_delete = accept_completion.prior_delete
-    local cursor = vim.api.nvim_win_get_cursor(0)
-    local range = {
-      start = {
-        line = cursor[1] - 1,
-        character = math.max(cursor[2] - prior_delete, 0),
-      },
-      ["end"] = {
-        line = cursor[1] - 1,
-        character = vim.fn.col("$"),
-      },
-    }
 
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Space><Left><Del>", true, false, true), "n", false)
-    vim.lsp.util.apply_text_edits(
-      { { range = range, newText = completion_text } },
-      vim.api.nvim_get_current_buf(),
-      "utf-8"
-    )
-
-    local lines = u.line_count(completion_text)
-    local last_line = u.get_last_line(completion_text)
-    local new_cursor_pos = { cursor[1] + lines, cursor[2] + #last_line + 1 }
-    vim.api.nvim_win_set_cursor(0, new_cursor_pos)
-  else
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Tab>", true, false, true), "n", true)
+  if accept_completion == nil then
+    return
   end
+  if not accept_completion.is_active then
+    return
+  end
+
+  local completion_text = accept_completion.completion_text
+  local prior_delete = accept_completion.prior_delete
+  local cursor = accept_completion.cursor
+  local range = {
+    start = {
+      line = cursor[1] - 1,
+      character = math.max(cursor[2] - prior_delete, 0),
+    },
+    ["end"] = {
+      line = cursor[1] - 1,
+      character = vim.fn.col("$"),
+    },
+  }
+
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Space><Left><Del>", true, false, true), "n", false)
+  vim.lsp.util.apply_text_edits(
+    { { range = range, newText = completion_text } },
+    vim.api.nvim_get_current_buf(),
+    "utf-8"
+  )
+
+  local lines = u.line_count(completion_text)
+  local last_line = u.get_last_line(completion_text)
+  local new_cursor_pos = { cursor[1] + lines, cursor[2] + #last_line + 1 }
+  vim.api.nvim_win_set_cursor(0, new_cursor_pos)
 end
 
 function CompletionPreview.on_accept_suggestion_word()
